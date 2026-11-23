@@ -43,6 +43,28 @@ class DiagnosisResult(BaseModel):
     gingivitis_percent: float
     image_base64: str
 
+PLAQUE_CLASS = 3
+INFLAMMATION_CLASS = 1
+
+
+# Função auxiliar que permite renderizar separadamente classes distintas
+def render_view(result, class_ids, color, label_text):
+    image = result.orig_img.copy()
+    overlay = image.copy()
+
+    if result.masks is not None:
+        classes = result.boxes.cls.cpu().numpy().astype(int)
+        for polygon, cls in zip(result.masks.xy, classes):
+            if cls in class_ids:
+                cv2.fillPoly(overlay, [polygon.astype(np.int32)], color)
+
+    visual = cv2.addWeighted(image, 0.55, overlay, 0.45, 0)
+
+    cv2.putText(visual, label_text, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(visual, label_text, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+
+    ok, buffer = cv2.imencode(".png", visual)
+    return "data:image/png;base64," + base64.b64encode(buffer).decode("utf-8")
 
 @app.get("/")
 def read_root():
@@ -92,14 +114,18 @@ async def analyze_image(file: UploadFile = File(...)):
             
             # Formata no padrão de Data URI
             image_base64 = f"data:image/png;base64,{encoded_string}"
+        
+        
+        plaque_img = render_view(result, {PLAQUE_CLASS}, (0, 255, 255),f"Plaque: {percentages['plaque_percent']:.2f}%")
+        gingivitis_img = render_view( result, {INFLAMMATION_CLASS}, (0, 0, 255),f"Gingivitis: {percentages['gingivitis_percent']:.2f}%")
 
-        # 4. Retorna tudo no mesmo JSON
         return {
             "status": "sucesso",
             "filename": file.filename,
             "plaque_percent": round(percentages["plaque_percent"], 2),
             "gingivitis_percent": round(percentages["gingivitis_percent"], 2),
-            "image_base64": image_base64
+            "image_plaque_base64": plaque_img,
+            "image_gingivitis_base64": gingivitis_img,
         }
 
     except Exception as e:
